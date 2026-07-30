@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background-color: #FAF7F2;
+}
+
+body {
+  margin: 0;
+  background-color: #FAF7F2;
+  color: #1C1917;
+  font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom editorial typography styles */
+h1, h2, h3, .font-serif-editorial {
+  font-family: var(--font-serif), "Cormorant Garamond", Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* Good Neighbor lowercased tracking utilities */
+.tracking-editorial {
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+/* Hairline border accents */
+.border-hairline {
+  border-color: rgba(28, 25, 23, 0.12);
+}
+
+a,
+button,
+input,
+textarea,
+select,
+summary {
+  border-radius: 0;
+}
+
+button,
+summary {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid #D8A934;
+  outline-offset: 3px;
+}
