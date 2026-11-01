@@ -2,7 +2,7 @@ import {createHmac} from 'node:crypto';
 import {HttpError} from './auth.js';
 const mutations=new Set(['create','edit','status']);
 export function envelope(command,user,cfg,now=Date.now()){
-  const payload=JSON.stringify({...command,contract:'hakeems.sheets.v1',spreadsheetId:cfg.spreadsheetId,actor:user.email,actorId:user.subject,role:user.role});
+  const payload=JSON.stringify({...command,contract:'hakeems.sheets.v1',spreadsheetId:cfg.spreadsheetId,actor:user.email,actorId:user.subject,role:user.role,provider:user.provider,credentialVersion:user.credentialVersion});
   const timestamp=String(now);
   return {timestamp,payload,signature:createHmac('sha256',cfg.scriptSecret).update(timestamp+'\n'+payload).digest('hex')};
 }
@@ -24,6 +24,6 @@ export async function sheets(command,user,cfg,fetcher=fetch){
   if(!response.ok)throw new HttpError(503,write?'The booking outcome needs checking. Keep the same request reference.':'The Google Sheets connection is unavailable.',unknown);
   let result;try{result=await response.json();}catch{throw new HttpError(503,'The booking service returned an unreadable response.',unknown);}
   if(result.contract!=='hakeems.sheets.v1'||result.spreadsheetId!==cfg.spreadsheetId||typeof result.ok!=='boolean')throw new HttpError(503,'The booking service does not match the configured Google Sheet.',unknown);
-  if(!result.ok){const status=['CONFLICT','STALE','REQUEST_REUSED'].includes(result.code)?409:result.code==='NOT_FOUND'?404:['CORRUPT_WORKBOOK','OUTCOME_UNKNOWN','BUSY','MAINTENANCE','WRITES_DISABLED','SETUP_REQUIRED'].includes(result.code)?503:result.code==='UNAUTHORIZED'?403:400;throw new HttpError(status,result.message||'The booking could not be saved.',result.code);}
+  if(!result.ok){const status=['CONFLICT','STALE','REQUEST_REUSED'].includes(result.code)?409:result.code==='NOT_FOUND'?404:result.code==='RATE_LIMITED'?429:['CORRUPT_WORKBOOK','OUTCOME_UNKNOWN','BUSY','MAINTENANCE','WRITES_DISABLED','SETUP_REQUIRED','STAFF_LOGIN_UNAVAILABLE'].includes(result.code)?503:result.code==='UNAUTHORIZED'?403:400;throw new HttpError(status,result.message||'The booking could not be saved.',result.code);}
   return result;
 }

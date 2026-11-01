@@ -74,7 +74,26 @@ $('retry-request').addEventListener('click',()=>state.command&&submit(state.comm
 $('logout').addEventListener('click',async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});location.href='/';}catch(error){notice(error.message);}});
 async function start(){
  if(preview){$('preview-banner').hidden=false;state.user={name:'Demo staff',email:'Fictional preview'};state.writes=true;state.rooms=PROPERTY_UNITS.map(unit=>({...unit}));const day=today();state.bookings=[{id:'demo-1',version:1,roomId:'2A',guestName:'Sample Guest One',contact:'sample@example.invalid',checkIn:day,checkOut:addDays(day,2),status:'CONFIRMED',source:'DIRECT_CALL',reference:'DEMO-001',totalDue:160000,amountPaid:80000,nightlyRate:80000,notes:''},{id:'demo-2',version:1,roomId:'2C',guestName:'Sample Guest Two',contact:'sample2@example.invalid',checkIn:addDays(day,1),checkOut:addDays(day,3),status:'PENDING',source:'WALK_IN',reference:'DEMO-002',totalDue:100000,amountPaid:0,nightlyRate:50000,notes:''}];$('connection').textContent='Local design preview. Google Sheets and Google sign-in are not connected.';setRooms();}
- else{try{const result=await api('/api/session');Object.assign(state,{user:result.user,csrf:result.csrf,currency:result.currency,timeZone:result.timeZone,writes:result.writesEnabled});}catch(error){$('login').hidden=false;$('connection').textContent=error.code==='SETUP_REQUIRED'?'Google Sheets setup is required.':'Staff sign-in required.';if(error.code==='SETUP_REQUIRED'){$('setup-message').textContent='The site is ready for connection setup. Management must configure Google sign-in and the booking script before bookings can be saved.';$('login').querySelector('a').hidden=true;}return;}}
- $('workspace').hidden=false;$('identity').textContent=state.user.name;$('logout').hidden=preview;$('schedule-start').value=today();restorePending();showPending();if(!state.writes)notice('Google Sheets writes are disabled pending deployment verification.');await refresh();
+ else{try{const result=await api('/api/session');Object.assign(state,{user:result.user,csrf:result.csrf,currency:result.currency,timeZone:result.timeZone,writes:result.writesEnabled});}catch(error){$('login').hidden=false;$('connection').textContent=error.code==='SETUP_REQUIRED'?'Google Sheets setup is required.':'Staff sign-in required.';if(error.code==='SETUP_REQUIRED'){$('setup-message').textContent='The site is ready for connection setup. Management must configure Google sign-in and the booking script before bookings can be saved.';$('google-login').hidden=true;$('staff-login-form').hidden=true;}return;}}
+ $('workspace').hidden=false;
+ if(!preview&&state.user.role==='OWNER'){$('staff-access').hidden=false;loadStaffAccess();}
+$('identity').textContent=state.user.name;$('logout').hidden=preview;$('schedule-start').value=today();restorePending();showPending();if(!state.writes)notice('Google Sheets writes are disabled pending deployment verification.');await refresh();
 }
+let loginCsrf='';
+async function loginChallenge(){const result=await api('/auth/staff-challenge');loginCsrf=result.csrf;}
+$('staff-login-form').addEventListener('submit',async event=>{
+ event.preventDefault();const form=event.target,button=$('staff-sign-in');button.disabled=true;$('login-error').hidden=true;
+ try{if(!loginCsrf)await loginChallenge();await api('/auth/staff',{method:'POST',headers:{'X-CSRF-Token':loginCsrf},body:JSON.stringify({username:form.elements.username.value,password:form.elements.password.value})});form.reset();location.assign('/');}
+ catch(error){$('login-error').textContent=error.message;$('login-error').hidden=false;if(error.code==='CSRF')loginCsrf='';}
+ finally{form.elements.password.value='';button.disabled=false;}
+});
+async function loadStaffAccess(){try{const result=await api('/api/staff-access');$('staff-access-status').textContent=result.enabled?'Shared staff login is enabled.':'Shared staff login is disabled. Set a password to enable it.';$('disable-staff-access').disabled=!result.enabled;}catch(error){$('staff-access-status').textContent=error.message;}}
+async function changeStaffAccess(enabled,password){
+ $('save-staff-access').disabled=true;$('disable-staff-access').disabled=true;$('staff-access-result').textContent='Saving staff access…';
+ try{await api('/api/staff-access',{method:'POST',body:JSON.stringify({enabled,...(enabled?{password}:{})})});$('staff-access-form').reset();$('staff-access-result').textContent=enabled?'Password saved. Staff can now sign in with username staff and the password you chose.':'Staff login disabled. Existing staff sessions no longer have access.';await loadStaffAccess();}
+ catch(error){$('staff-access-result').textContent=error.message+' Reload staff access to check the current setting before retrying.';await loadStaffAccess();}
+ finally{$('staff-access-form').elements.password.value='';$('staff-access-form').elements.confirmation.value='';$('save-staff-access').disabled=false;}
+}
+$('staff-access-form').addEventListener('submit',event=>{event.preventDefault();const form=event.target;if(form.elements.password.value!==form.elements.confirmation.value){$('staff-access-result').textContent='The passwords do not match.';return;}changeStaffAccess(true,form.elements.password.value);});
+$('disable-staff-access').addEventListener('click',()=>{if(confirm('Disable shared staff access and sign out all staff sessions?'))changeStaffAccess(false);});
 start();

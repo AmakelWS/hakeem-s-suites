@@ -154,6 +154,38 @@ function sheetSettings_(){
   return {properties,spreadsheetId,secret,owners:list('OWNER_EMAILS'),staff:list('STAFF_EMAILS'),writes:properties.getProperty('WRITES_ENABLED')==='true'};
 }
 function doGet(){return reply_(failure_('UNAUTHORIZED','Use the authenticated staff website.'),'');}
+function sharedCredential_(settings){
+  const raw=settings.properties.getProperty('SHARED_STAFF_CREDENTIAL');
+  if(!raw)return null;
+  const value=JSON.parse(raw);
+  if(!value||!/^scrypt-v1\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(value.hash||'')||!/^[a-f0-9-]{36}$/.test(value.version||''))throw new Error('Invalid staff credential configuration.');
+  return value;
+}
+function staffAccess_(settings,command,credential){
+  const answer=extra=>({contract:'hakeems.sheets.v1',ok:true,...extra});
+  if(command.op==='staffAuth'){
+    if(!credential)return failure_('STAFF_LOGIN_UNAVAILABLE','The owner has not enabled the shared staff login yet.');
+    const now=Date.now(),raw=settings.properties.getProperty('SHARED_STAFF_ATTEMPTS');
+    let attempts=raw?JSON.parse(raw):{start:now,count:0};
+    if(!Number.isFinite(attempts.start)||!Number.isInteger(attempts.count)||attempts.count<0)throw new Error('Invalid login counter.');
+    if(now-attempts.start>=600000)attempts={start:now,count:0};
+    if(attempts.count>=30)return failure_('RATE_LIMITED','Too many staff sign-in attempts. Wait up to 10 minutes and try again.');
+    attempts.count++;
+    settings.properties.setProperty('SHARED_STAFF_ATTEMPTS',JSON.stringify(attempts));
+    // Only the signed website server can call this operation; never send its result to a browser.
+    return answer({hash:credential.hash,version:credential.version});
+  }
+  if(command.op==='staffSettings')return answer({enabled:!!credential});
+  if(command.op==='staffSession')return answer({enabled:true});
+  if(typeof command.enabled!=='boolean')return failure_('INVALID','Choose whether to enable staff access.');
+  if(command.enabled){
+    const next=command.credential;
+    if(!next||!/^scrypt-v1\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(next.hash||'')||!/^[a-f0-9-]{36}$/.test(next.version||''))return failure_('INVALID','Invalid staff password configuration.');
+    settings.properties.setProperty('SHARED_STAFF_CREDENTIAL',JSON.stringify({hash:next.hash,version:next.version}));
+  }else settings.properties.deleteProperty('SHARED_STAFF_CREDENTIAL');
+  settings.properties.deleteProperty('SHARED_STAFF_ATTEMPTS');
+  return answer({enabled:command.enabled});
+}
 function doPost(event){
   let settings,lock,held=false;
   try{
@@ -166,12 +198,18 @@ function doPost(event){
     if(!secureEqual_(signed.signature,signature))return reply_(failure_('UNAUTHORIZED','Invalid booking signature.'),settings.spreadsheetId);
     const command=JSON.parse(signed.payload);
     if(command.contract!=='hakeems.sheets.v1'||command.spreadsheetId!==settings.spreadsheetId||typeof command.actor!=='string'||!command.actor||command.actor!==command.actor.toLowerCase()||typeof command.actorId!=='string'||!command.actorId)return reply_(failure_('UNAUTHORIZED','Invalid staff identity or booking sheet.'),settings.spreadsheetId);
-    const role=settings.owners.includes(command.actor)?'OWNER':settings.staff.includes(command.actor)?'STAFF':null;
+    const authOps=['staffAuth','staffSettings','staffSession','staffConfigure'];
+    const shared=command.actor==='shared-staff',service=command.actor==='staff-login-service';
+    const role=service&&command.actorId==='staff-login-service'&&command.provider==='service'&&command.op==='staffAuth'?'AUTH':shared&&command.actorId==='shared-staff'&&command.provider==='shared-staff'?'STAFF':!shared&&!service&&settings.owners.includes(command.actor)?'OWNER':!shared&&!service&&settings.staff.includes(command.actor)?'STAFF':null;
     if(!role||role!==command.role)return reply_(failure_('UNAUTHORIZED','This staff account is not allowed to use the booking sheet.'),settings.spreadsheetId);
-    if(!['read','request','create','edit','status'].includes(command.op))return reply_(failure_('INVALID','Unsupported booking operation.'),settings.spreadsheetId);
-    if(!['read','request'].includes(command.op)&&!settings.writes)return reply_(failure_('WRITES_DISABLED','Booking saves are disabled by management.'),settings.spreadsheetId);
+    if(!['read','request','create','edit','status',...authOps].includes(command.op))return reply_(failure_('INVALID','Unsupported booking operation.'),settings.spreadsheetId);
+    if((command.op==='staffAuth'&&role!=='AUTH')||(['staffSettings','staffConfigure'].includes(command.op)&&role!=='OWNER')||(command.op==='staffSession'&&!shared))return reply_(failure_('UNAUTHORIZED','This account cannot manage staff access.'),settings.spreadsheetId);
+    if(['create','edit','status'].includes(command.op)&&!settings.writes)return reply_(failure_('WRITES_DISABLED','Booking saves are disabled by management.'),settings.spreadsheetId);
     lock=LockService.getScriptLock();held=lock.tryLock(20000);
     if(!held)return reply_(failure_('BUSY','The booking desk is busy. Retry the same request reference.'),settings.spreadsheetId);
+    const credential=shared||authOps.includes(command.op)?sharedCredential_(settings):null;
+    if(shared&&(!credential||!secureEqual_(command.credentialVersion,credential.version)))return reply_(failure_('UNAUTHORIZED','Staff access changed. Sign in again or ask the owner for access.'),settings.spreadsheetId);
+    if(authOps.includes(command.op))return reply_(staffAccess_(settings,command,credential),settings.spreadsheetId);
     // A killed execution or ambiguous write must stop later booking decisions.
     // Management reconciles the marked request before manually clearing this flag.
     if(settings.properties.getProperty('UNRESOLVED_WRITE'))return reply_(failure_('OUTCOME_UNKNOWN','A previous save needs management reconciliation. Keep your request reference; new saves are paused.'),settings.spreadsheetId);

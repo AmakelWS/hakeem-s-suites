@@ -26,7 +26,19 @@ export function config(env=process.env){
   return {origin:origin.origin,clientId:env.GOOGLE_CLIENT_ID,clientSecret:env.GOOGLE_CLIENT_SECRET,secret:env.SESSION_SECRET,scriptUrl:script.href,scriptSecret:env.GOOGLE_SCRIPT_SECRET,spreadsheetId:env.GOOGLE_SPREADSHEET_ID,writes:env.BOOKING_WRITES_ENABLED==='true',currency:env.APP_CURRENCY,timeZone:env.PROPERTY_TIMEZONE,owners,staff};
 }
 export function role(email,cfg){email=String(email||'').toLowerCase();if(cfg.owners.has(email))return 'OWNER';if(cfg.staff.has(email))return 'STAFF';throw new HttpError(403,'This Google account has not been added to the staff list.','NOT_STAFF');}
-export function session(req,cfg){const data=unseal(cookies(req).hkg_session,cfg.secret);if(!data||data.provider!=='google'||data.audience!==cfg.clientId||typeof data.subject!=='string'||!data.subject||typeof data.csrf!=='string')throw new HttpError(401,'Sign in with your Google staff account.','SIGN_IN_REQUIRED');data.role=role(data.email,cfg);return data;}
+export function session(req,cfg){
+  const data=unseal(cookies(req).hkg_session,cfg.secret);
+  const denied=()=>{throw new HttpError(401,'Sign in to the staff booking desk.','SIGN_IN_REQUIRED');};
+  if(!data||typeof data.csrf!=='string'||!data.csrf||typeof data.subject!=='string'||!data.subject)return denied();
+  if(data.provider==='shared-staff'){
+    if(data.audience!==cfg.origin||data.subject!=='shared-staff'||data.email!=='shared-staff'||data.role!=='STAFF'||typeof data.credentialVersion!=='string'||!/^[a-f0-9-]{36}$/.test(data.credentialVersion))return denied();
+    // The gateway checks this version on every data request and session check.
+    return data;
+  }
+  if(data.provider!=='google'||data.audience!==cfg.clientId)return denied();
+  if(['shared-staff','staff-login-service'].includes(data.email))return denied();
+  data.role=role(data.email,cfg);return data;
+}
 export function csrf(req,user,cfg){if(!equal(req.headers['x-csrf-token'],user.csrf)||req.headers.origin!==cfg.origin)throw new HttpError(403,'Reload the page before submitting this change.','CSRF');}
 export function oauthClient(cfg){return new OAuth2Client({clientId:cfg.clientId,clientSecret:cfg.clientSecret,redirectUri:cfg.origin+'/auth/callback',transporterOptions:{timeout:10000}});}
 export function beginLogin(cfg,now=Date.now()){

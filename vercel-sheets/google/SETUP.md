@@ -93,3 +93,7 @@ For a persistent marker, management must:
 Never automatically clear the marker on a timer. Locks coordinate only this script project; they do not block manual spreadsheet editing or other applications.
 
 References: [Google web apps](https://developers.google.com/apps-script/guides/web), [script locks](https://developers.google.com/apps-script/reference/lock/lock-service), [advanced Sheets service](https://developers.google.com/apps-script/advanced/sheets), [RAW writes](https://developers.google.com/workspace/sheets/api/reference/rest/v4/ValueInputOption), [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Apps Script quotas](https://developers.google.com/apps-script/guides/services/quotas), [Vercel Hobby restrictions](https://vercel.com/docs/plans/hobby).
+
+## Optional shared staff password
+
+Deploy the current generated BookingGateway.gs to the same existing Apps Script deployment, retaining its spreadsheet pin, private HMAC key and owner allowlist. Do not create another script writer. The Google owner can then use the website's Shared staff login panel to set or disable the password for username `staff`. This does not enable booking writes. The gateway stores `SHARED_STAFF_CREDENTIAL` (scrypt hash and revocation version) and `SHARED_STAFF_ATTEMPTS` (persistent attempt counter) in private Script Properties automatically. Do not copy them into Sheet cells, public source or browser storage. Rotating or disabling staff access revokes existing sessions; keep the separate Google owner recovery login.

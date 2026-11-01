@@ -36,3 +36,32 @@ test('Google library verifies signatures; nonce, verified email, audience and is
  for(const changes of [{aud:'other'},{exp:1},{nonce:'wrong'},{email_verified:false},{iss:'https://evil.invalid'},{email:'unlisted@example.invalid'}])await assert.rejects(verifyIdentity(jwt({...claims,...changes}),cfg,'expected',client));
  await assert.rejects(verifyIdentity(jwt(claims).slice(0,-10)+'forged',cfg,'expected',client));
 });
+
+const {hashStaffPassword,checkStaffPassword,newStaffSession}=await import('../lib/staff-auth.js');
+const staffPassword='test-only long staff password',staffHash=await hashStaffPassword(staffPassword),staffVersion='22222222-2222-4222-8222-222222222222';
+async function staffChallenge(){const r=await request('/auth/staff-challenge');return {cookie:r.headers['set-cookie'].split(';')[0],origin:cfg.origin,'x-csrf-token':r.json.csrf,'content-type':'application/json'};}
+test('shared sign-in enforces challenge and origin before reading credentials',async()=>{
+ let calls=0;const options={method:'POST',data:{username:'staff',password:staffPassword},fetcher:async()=>{calls++;return response(result());}};
+ assert.equal((await request('/auth/staff',options)).statusCode,403);const headers=await staffChallenge();assert.equal((await request('/auth/staff',{...options,headers:{...headers,origin:'https://evil.invalid'}})).statusCode,403);assert.equal(calls,0);
+});
+test('shared sign-in uses persistent attempt gate and hides credentials; sessions have staff role',async()=>{
+ let command;const headers=await staffChallenge();const r=await request('/auth/staff',{method:'POST',headers,data:{username:'staff',password:staffPassword},fetcher:async(_url,options)=>{command=JSON.parse(JSON.parse(options.body).payload);return response(result({hash:staffHash,version:staffVersion}));}});
+ assert.equal(r.statusCode,200);assert.equal(command.op,'staffAuth');assert.equal(command.actor,'staff-login-service');assert.equal(command.role,'AUTH');assert.equal(JSON.stringify(command).includes(staffPassword),false);assert.equal(r.body.includes(staffHash),false);
+ const value=r.headers['set-cookie'].find(v=>v.startsWith('hkg_session='));assert.match(value,/HttpOnly/);assert.match(value,/Secure/);assert.match(value,/SameSite=Lax/);const shared=unseal(value.split(';')[0].slice(12),cfg.secret);assert.equal(shared.role,'STAFF');assert.equal(shared.provider,'shared-staff');
+ const sharedHeaders={cookie:value.split(';')[0]};let check;assert.equal((await request('/api/session',{headers:sharedHeaders,fetcher:async(_url,options)=>{check=JSON.parse(JSON.parse(options.body).payload);return response(result());}})).statusCode,200);assert.equal(check.op,'staffSession');assert.equal(check.credentialVersion,staffVersion);assert.equal((await request('/api/staff-access',{headers:sharedHeaders})).statusCode,403);
+});
+test('wrong username/password and exhausted rate gate never issue sessions',async()=>{
+ const headers=await staffChallenge();for(const credentials of [{username:'staff',password:'wrong password'},{username:'owner',password:staffPassword}]){const r=await request('/auth/staff',{method:'POST',headers,data:credentials,fetcher:async()=>response(result({hash:staffHash,version:staffVersion}))});assert.equal(r.statusCode,401);assert.equal(r.headers['set-cookie'],undefined);}
+ const limited=await request('/auth/staff',{method:'POST',headers,data:{username:'staff',password:staffPassword},fetcher:async()=>response(result({ok:false,code:'RATE_LIMITED'}))});assert.equal(limited.statusCode,429);assert.equal(limited.headers['set-cookie'],undefined);
+});
+test('only Google owners can set/disable staff passwords; hashes stay server-side',async()=>{
+ assert.equal((await request('/api/staff-access',{headers:auth})).statusCode,403);const ownerHeaders={...postHeaders,cookie:'hkg_session='+seal({...user,email:'owner@example.invalid'},cfg.secret)};let command;
+ const fetcher=async(_url,options)=>{command=JSON.parse(JSON.parse(options.body).payload);return response(result({enabled:command.enabled??true,hash:'must-not-leak'}));};
+ assert.equal((await request('/api/staff-access',{method:'POST',headers:ownerHeaders,data:{enabled:true,password:'short'},fetcher})).statusCode,400);
+ const saved=await request('/api/staff-access',{method:'POST',headers:ownerHeaders,data:{enabled:true,password:staffPassword},fetcher});assert.equal(saved.statusCode,200);assert.equal(command.op,'staffConfigure');assert.equal(await checkStaffPassword(staffPassword,command.credential.hash),true);assert.equal(saved.body.includes('scrypt'),false);assert.equal(JSON.stringify(command).includes(staffPassword),false);
+ assert.equal((await request('/api/staff-access',{method:'POST',headers:ownerHeaders,data:{enabled:false},fetcher})).statusCode,200);assert.equal(command.credential,undefined);assert.equal((await request('/api/staff-access',{headers:ownerHeaders,fetcher})).body.includes('must-not-leak'),false);
+});
+test('revoked shared credentials fail on session and data requests; owner role cannot be forged',async()=>{
+ const shared=newStaffSession(staffVersion,cfg),headers={cookie:'hkg_session='+seal(shared,cfg.secret)};for(const path of ['/api/session','/api/ledger'])assert.equal((await request(path,{headers,fetcher:async()=>response(result({ok:false,code:'UNAUTHORIZED'}))})).statusCode,403);
+ assert.equal((await request('/api/session',{headers:{cookie:'hkg_session='+seal({...shared,role:'OWNER'},cfg.secret)}})).statusCode,401);
+});

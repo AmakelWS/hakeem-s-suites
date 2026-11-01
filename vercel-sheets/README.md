@@ -1,8 +1,8 @@
 # Hakeem’s Suites staff bookings
 
-Staff booking website with Google sign-in and Google Sheets as the live booking store. This is separate from the public Next.js marketing website in the repository root.
+Staff booking website with a shared staff password and Google owner sign-in and Google Sheets as the live booking store. This is separate from the public Next.js marketing website in the repository root.
 
-**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in and authenticated reads from the selected Google Sheet are verified. The initializer created Rooms and Bookings while preserving Sheet1, and the website read all 15 units with their confirmed rates. Booking saves remain disabled pending approval for fictional save/overlap tests and the backing Sheet's sharing review. This is not a business availability ledger; existing reservations have not been imported.
+**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in and authenticated reads from the selected Google Sheet are verified. The initializer created Rooms and Bookings while preserving Sheet1, and the website read all 15 units with their confirmed rates. Booking saves remain disabled pending execution of the approved fictional save/overlap tests and backing Sheet sharing restriction. This is not a business availability ledger; existing reservations have not been imported.
 
 ## Connect this folder to Vercel
 
@@ -15,11 +15,17 @@ Staff booking website with Google sign-in and Google Sheets as the live booking 
 
 The owner confirmed this deployment is a non-commercial proof of concept using Vercel Hobby. Business use requires an appropriate hosting plan. A Cloudflare Workers adapter (`worker.js` and `wrangler.jsonc`) is also included as an alternative; it is not deployed or configured automatically by connecting Vercel.
 
+## Shared staff login
+
+Sign in with the configured Google **owner** account, then use **Shared staff login → Set staff password** on the website. Username is `staff`; choose a 14–128 character password and share it privately. No staff Google account is needed. The password is hashed by the server using salted scrypt; only the hash is saved in private Apps Script Properties, never the Sheet, frontend or repository. Deploy the updated gateway to the existing endpoint before using this feature. Access starts disabled until the owner sets a password.
+
+Staff sessions last eight hours. Owner password changes or disabling access revoke existing sessions on their next data request. Only the Google owner can manage this setting. There is no public registration or password-reset email. The persistent gateway counter permits 30 attempts per 10 minutes across all server instances, including successful attempts; if exhausted, staff must wait for that window to expire. The ledger records `shared-staff` as the editor, so it does not identify individual employees. Sign out on shared devices and have staff add their name in the reservation notes when individual attribution is needed.
+
 ## Booking behavior
 
 - Shared ledger, search, month/7/14-day occupancy schedule, reservation form, edits, status changes and payment balances.
 - Fifteen actual units: twelve apartments at 80,000 FCFA/night and three C studios at 50,000 FCFA/night. Currency XAF; property time zone Africa/Douala. See [PROPERTY.md](PROPERTY.md).
-- Individual Google sign-in, verified identity tokens, explicit staff and owner allowlists, signed sessions and CSRF checks.
+- Shared `staff` username/password for booking staff; separate Google owner login and optional individual Google allowlists. Signed HttpOnly sessions, exact-origin CSRF checks and persistent login attempt limits.
 - The server signs requests to one Apps Script project. Its script lock surrounds the availability check and write. Both layers pin the spreadsheet ID and validate the staff identity.
 - Stable request IDs prevent duplicate creations on retries; versions reject stale edits. Ambiguous writes pause further decisions until management reconciles them.
 - Confirmed, checked-in and checked-out stays reserve `[check-in, check-out)`. Pending requests do not hold a unit. Checkout day can be another guest’s arrival day.
@@ -47,7 +53,7 @@ npm run build:gateway
 npm test
 ```
 
-All 46 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
+All 55 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
 
 Once the real development environment is configured, `node --env-file=.env.local dev-server.js` serves on port 8091. Register the local callback separately. Localhost-only `?preview=1` uses fictional in-memory records; deployed hosts cannot enable this mode.
 
