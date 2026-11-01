@@ -1,0 +1,20 @@
+{
+  "name": "hakeems-google-sheets",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev": "node dev-server.js",
+    "test": "node --test tests/*.test.js",
+    "build:gateway": "node scripts/build-gateway.js"
+  },
+  "dependencies": {
+    "google-auth-library": "11.3.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.156.0"
+  }
+}

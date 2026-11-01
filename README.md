@@ -51,3 +51,7 @@ Add the same environment variables in Vercel Project Settings. `vercel.json` inc
 ## Setmore
 
 Replace `company.booking.setmoreUrl` in `src/data/company.ts` with the real Setmore booking URL. If Setmore provides a script snippet, paste it into `src/components/conversion/SetmoreEmbed.tsx` where indicated.
+
+## Staff booking system
+
+The Google Sheets staff booking application is in [vercel-sheets](vercel-sheets/README.md). To deploy it as a separate Vercel project, select **Root Directory: vercel-sheets**, Framework **Other**, Node.js **24**, install `npm ci`, output `public`, and no frontend build command. Configure its private Google connection and complete the setup/acceptance checks before enabling real bookings. The repository root remains the public marketing website.
