@@ -2,7 +2,7 @@
 
 Staff booking website with Google sign-in and Google Sheets as the live booking store. This is separate from the public Next.js marketing website in the repository root.
 
-**Source ready for deployment setup; live bookings remain disabled.** A GitHub push or Vercel deployment does not configure Google access. The Apps Script endpoint, staff OAuth client, private server variables and live acceptance checks must be completed before staff rely on availability.
+**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in and authenticated reads from the selected Google Sheet are verified. The initializer created Rooms and Bookings while preserving Sheet1, and the website read all 15 units with their confirmed rates. Booking saves remain disabled pending approval for fictional save/overlap tests and the backing Sheet's sharing review. This is not a business availability ledger; existing reservations have not been imported.
 
 ## Connect this folder to Vercel
 
@@ -13,7 +13,7 @@ Staff booking website with Google sign-in and Google Sheets as the live booking 
 5. Complete [Google connection setup](google/SETUP.md), registering `https://YOUR-STABLE-DOMAIN/auth/callback` for the Google OAuth web client. `APP_URL` must match that exact HTTPS origin.
 6. Deploy, test sign-in and an authenticated ledger read, then complete the disposable-sheet acceptance tests in the setup guide. Reconcile existing reservations before enabling live saves.
 
-Vercel’s Hobby plan is restricted to personal, non-commercial use. Choose an appropriate plan for business hosting. A Cloudflare Workers adapter (`worker.js` and `wrangler.jsonc`) is also included as an alternative; it is not deployed or configured automatically by connecting Vercel.
+The owner confirmed this deployment is a non-commercial proof of concept using Vercel Hobby. Business use requires an appropriate hosting plan. A Cloudflare Workers adapter (`worker.js` and `wrangler.jsonc`) is also included as an alternative; it is not deployed or configured automatically by connecting Vercel.
 
 ## Booking behavior
 
