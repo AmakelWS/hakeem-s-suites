@@ -97,3 +97,7 @@ References: [Google web apps](https://developers.google.com/apps-script/guides/w
 ## Optional shared staff password
 
 Deploy the current generated BookingGateway.gs to the same existing Apps Script deployment, retaining its spreadsheet pin, private HMAC key and owner allowlist. Do not create another script writer. The Google owner can then use the website's Shared staff login panel to set or disable the password for username `staff`. This does not enable booking writes. The gateway stores `SHARED_STAFF_CREDENTIAL` (scrypt hash and revocation version) and `SHARED_STAFF_ATTEMPTS` (persistent attempt counter) in private Script Properties automatically. Do not copy them into Sheet cells, public source or browser storage. Rotating or disabling staff access revokes existing sessions; keep the separate Google owner recovery login.
+
+## Simplified booking schema
+
+Deploy the current gateway and frontend together. Bookings uses 17 columns, without business reference or fingerprint fields. Do not delete columns manually while an older gateway is in use. For an owner-authorized clearing, use the guarded editor utilities described in the README: pause, back up, clear/migrate, verify and resume. Cleared IDs are retired privately to reject stale retries. A creation retry after a later amendment must be reconciled by request lookup rather than reapplied.

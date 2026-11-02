@@ -2,7 +2,7 @@
 
 Staff booking website with a shared staff password and Google owner sign-in and Google Sheets as the live booking store. This is separate from the public Next.js marketing website in the repository root.
 
-**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in, live reads and a fictional browser save are verified. Signed gateway checks verified overlapping requests, stable-reference retries and cancellation. Test saves are enabled; the backing Sheet is restricted to its owner. All three fictional test records are cancelled. The shared staff login is deployed but starts disabled until the owner sets a password on the website. Existing business reservations have not been imported or reconciled.
+**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in, live reads and a fictional browser save are verified. Signed gateway checks verified overlapping requests, stable-reference retries and cancellation. Test saves are enabled; the backing Sheet is restricted to its owner. Shared staff login, a staff booking and cancellation have been verified live. All four cancelled fictional bookings were cleared at the owner’s request after a private backup. The current booking ledger is empty; its 17-column schema has no business reference or fingerprint fields. Existing business reservations have not been imported or reconciled.
 
 ## Connect this folder to Vercel
 
@@ -27,10 +27,16 @@ Staff sessions last eight hours. Owner password changes or disabling access revo
 - Fifteen actual units: twelve apartments at 80,000 FCFA/night and three C studios at 50,000 FCFA/night. Currency XAF; property time zone Africa/Douala. See [PROPERTY.md](PROPERTY.md).
 - Shared `staff` username/password for booking staff; separate Google owner login and optional individual Google allowlists. Signed HttpOnly sessions, exact-origin CSRF checks and persistent login attempt limits.
 - The server signs requests to one Apps Script project. Its script lock surrounds the availability check and write. Both layers pin the spreadsheet ID and validate the staff identity.
-- Stable request IDs prevent duplicate creations on retries; versions reject stale edits. Ambiguous writes pause further decisions until management reconciles them.
+- Stable request IDs prevent duplicate creations on retries; versions reject stale edits. Retries compare the saved booking rather than stored payload fingerprints. If a creation has since been amended, use request lookup to reconcile its current state. Ambiguous writes pause decisions until management reconciles them.
 - Confirmed, checked-in and checked-out stays reserve `[check-in, check-out)`. Pending requests do not hold a unit. Checkout day can be another guest’s arrival day.
 
 All booking changes must go through the website. A script lock cannot prevent manual spreadsheet edits or writes from another script project. Keep the sheet private, staff viewers only, and use one script project as the writer. Existing reservations are not imported automatically. There is no Airbnb/Booking.com synchronization or enforced guest-capacity limit.
+
+## Booking columns and owner cleanup
+
+The Bookings tab contains 17 columns: id, version, roomId, guestName, contact, checkIn, checkOut, status, source, totalDue, amountPaid, notes, createdBy, updatedBy, updatedAt, lastRequestId and nightlyRate. The business reference field and both fingerprint columns have been removed from the Sheet, API records and booking form. Recovery request IDs remain internal to the booking workflow.
+
+For an explicitly authorized reset, the owner can run `beginBookingCleanup` in the existing script editor, back up the ledger, then run `clearBookingsAndSimplifyColumns`. It clears only Bookings and preserves Rooms, other sheets, credentials and sharing. Removed booking IDs are retired in private Script Properties so delayed retries cannot recreate them. `finishBookingCleanup` verifies a temporary save, retry, overlap rejection and cancellation, removes its temporary record, then restores the earlier write switch. These editor utilities are not public API operations. An unacknowledged write leaves saves paused for reconciliation. Do not restore a backup or an old script version over newer bookings without review.
 
 ## Source layout
 
@@ -53,7 +59,7 @@ npm run build:gateway
 npm test
 ```
 
-All 57 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
+All 62 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
 
 Once the real development environment is configured, `node --env-file=.env.local dev-server.js` serves on port 8091. Register the local callback separately. Localhost-only `?preview=1` uses fictional in-memory records; deployed hosts cannot enable this mode.
 
