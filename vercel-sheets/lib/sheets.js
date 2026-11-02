@@ -2,7 +2,9 @@ import {createHmac} from 'node:crypto';
 import {HttpError} from './auth.js';
 const mutations=new Set(['create','edit','status']);
 export function envelope(command,user,cfg,now=Date.now()){
-  const payload=JSON.stringify({...command,contract:'hakeems.sheets.v1',spreadsheetId:cfg.spreadsheetId,actor:user.email,actorId:user.subject,role:user.role,provider:user.provider,credentialVersion:user.credentialVersion});
+  // An ASCII JSON wire representation avoids Apps Script request-body charset
+  // conversion changing signed bytes. JSON.parse restores the original Unicode.
+  const payload=JSON.stringify({...command,contract:'hakeems.sheets.v1',spreadsheetId:cfg.spreadsheetId,actor:user.email,actorId:user.subject,role:user.role,provider:user.provider,credentialVersion:user.credentialVersion}).replace(/[\u007f-\uffff]/g,char=>'\\u'+char.charCodeAt(0).toString(16).padStart(4,'0'));
   const timestamp=String(now);
   return {timestamp,payload,signature:createHmac('sha256',cfg.scriptSecret).update(timestamp+'\n'+payload).digest('hex')};
 }
@@ -12,7 +14,7 @@ export async function sheets(command,user,cfg,fetcher=fetch){
   let response;
   const signal=AbortSignal.timeout(45000);
   try{
-    response=await fetcher(cfg.scriptUrl,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify(envelope(command,user,cfg)),signal});
+    response=await fetcher(cfg.scriptUrl,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(envelope(command,user,cfg)),signal});
     // ContentService redirects its response to a one-time Google-hosted URL.
     // Follow only that GET response; never forward a signed booking body to a redirect.
     if([302,303].includes(response.status)){

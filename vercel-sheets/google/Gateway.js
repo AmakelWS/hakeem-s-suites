@@ -55,7 +55,7 @@ function doPost(event){
     if(typeof raw!=='string'||raw.length>40000)return reply_(failure_('UNAUTHORIZED','Invalid booking request.'),settings.spreadsheetId);
     const signed=JSON.parse(raw);
     if(typeof signed.timestamp!=='string'||!/^\d{13}$/.test(signed.timestamp)||Math.abs(Date.now()-Number(signed.timestamp))>300000||typeof signed.payload!=='string'||signed.payload.length>20000||typeof signed.signature!=='string'||!/^[a-f0-9]{64}$/.test(signed.signature))return reply_(failure_('UNAUTHORIZED','Invalid or expired booking request.'),settings.spreadsheetId);
-    const signature=Utilities.computeHmacSha256Signature(signed.timestamp+'\n'+signed.payload,settings.secret).map(n=>(n&255).toString(16).padStart(2,'0')).join('');
+    const signature=Utilities.computeHmacSha256Signature(signed.timestamp+'\n'+signed.payload,settings.secret,Utilities.Charset.UTF_8).map(n=>(n&255).toString(16).padStart(2,'0')).join('');
     if(!secureEqual_(signed.signature,signature))return reply_(failure_('UNAUTHORIZED','Invalid booking signature.'),settings.spreadsheetId);
     const command=JSON.parse(signed.payload);
     if(command.contract!=='hakeems.sheets.v1'||command.spreadsheetId!==settings.spreadsheetId||typeof command.actor!=='string'||!command.actor||command.actor!==command.actor.toLowerCase()||typeof command.actorId!=='string'||!command.actorId)return reply_(failure_('UNAUTHORIZED','Invalid staff identity or booking sheet.'),settings.spreadsheetId);

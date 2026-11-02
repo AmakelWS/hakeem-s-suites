@@ -5,7 +5,7 @@ import {Readable} from 'node:stream';
 import {OAuth2Client} from 'google-auth-library';
 import {config,seal,unseal,beginLogin,verifyIdentity} from '../lib/auth.js';
 import {handler} from '../api/index.js';
-import {sheets} from '../lib/sheets.js';
+import {sheets,envelope} from '../lib/sheets.js';
 const env={APP_URL:'https://hakeems.example.invalid',GOOGLE_CLIENT_ID:'test-client.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET:'test-client-secret',SESSION_SECRET:'a-secret-longer-than-32-characters-for-tests',GOOGLE_SCRIPT_URL:'https://script.google.com/macros/s/test-deployment/exec',GOOGLE_SCRIPT_SECRET:'a-separate-script-secret-longer-than-32-characters',GOOGLE_SPREADSHEET_ID:'test_spreadsheet_identifier_123456789',APP_CURRENCY:'XAF',PROPERTY_TIMEZONE:'Africa/Douala',STAFF_EMAILS:'staff@example.invalid',OWNER_EMAILS:'owner@example.invalid',BOOKING_WRITES_ENABLED:'true'};
 const cfg=config(env);
 const user={email:'staff@example.invalid',name:'Test Staff',subject:'staff-id',provider:'google',audience:cfg.clientId,csrf:'test-csrf',exp:Math.floor(Date.now()/1000)+600};
@@ -65,3 +65,5 @@ test('revoked shared credentials fail on session and data requests; owner role c
  const shared=newStaffSession(staffVersion,cfg),headers={cookie:'hkg_session='+seal(shared,cfg.secret)};for(const path of ['/api/session','/api/ledger'])assert.equal((await request(path,{headers,fetcher:async()=>response(result({ok:false,code:'UNAUTHORIZED'}))})).statusCode,403);
  assert.equal((await request('/api/session',{headers:{cookie:'hkg_session='+seal({...shared,role:'OWNER'},cfg.secret)}})).statusCode,401);
 });
+
+test('signed JSON uses ASCII wire bytes while preserving international guest details',()=>{const booking={guestName:'Fictional José — é 🏠',notes:'à Buéa'};const signed=envelope({op:'create',booking},user,cfg);assert.equal(/[^\x00-\x7f]/.test(signed.payload),false);assert.deepEqual(JSON.parse(signed.payload).booking,booking);assert.equal(signed.signature,createHmac('sha256',cfg.scriptSecret).update(signed.timestamp+'\n'+signed.payload).digest('hex'));});
