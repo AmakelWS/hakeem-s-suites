@@ -5,7 +5,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import {randomUUID} from 'node:crypto';
 const source=(await fs.readFile(new URL('../google/Rules.ts',import.meta.url),'utf8')).replace('function runCommand_(','export function main(');
 const {main}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(source)).toString('base64'));
-const headers=['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','reference','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','initialFingerprint','lastRequestId','lastFingerprint','nightlyRate'];
+const headers=['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','lastRequestId','nightlyRate'];
 // The Google adapter writes strings with Sheets API RAW semantics.
 const literal=row=>row;
 class Table{
@@ -16,7 +16,7 @@ class Table{
  addRow(index,row){this.rows.push(literal(row));if(this.failAfterWrite)throw new Error('Response interrupted after append');}
 }
 function workbook(){const rooms=new Table(['id','name','type','capacity','active','sample','nightlyRate'],[['r1','Room 1','Queen',2,true,false,''],['r2','Room 2','Twin',2,true,false,'']]);const bookings=new Table([...headers]);return {rooms,bookings,getTable:name=>name==='OnlineRooms'?rooms:name==='OnlineBookings'?bookings:undefined};}
-function cmd(op='create',extra={}){return {contract:'hakeems.sheets.v1',op,actor:'staff@example.invalid',actorId:'staff-id',role:'STAFF',requestId:randomUUID(),booking:{roomId:'r1',guestName:'Fictional Guest',contact:'+15551234567',checkIn:'2030-01-10',checkOut:'2030-01-12',status:'CONFIRMED',source:'DIRECT_CALL',reference:'CALL-1',totalDue:'300',amountPaid:'100',notes:'Test only'},...extra};}
+function cmd(op='create',extra={}){return {contract:'hakeems.sheets.v1',op,actor:'staff@example.invalid',actorId:'staff-id',role:'STAFF',requestId:randomUUID(),booking:{roomId:'r1',guestName:'Fictional Guest',contact:'+15551234567',checkIn:'2030-01-10',checkOut:'2030-01-12',status:'CONFIRMED',source:'DIRECT_CALL',totalDue:'300',amountPaid:'100',notes:'Test only'},...extra};}
 const run=(w,c)=>JSON.parse(main(w,JSON.stringify(c)));
 test('confirmed overlaps fail; adjacent stays and another room succeed',()=>{const w=workbook();assert.equal(run(w,cmd()).ok,true);assert.equal(run(w,cmd()).code,'CONFLICT');const a=cmd();a.booking.checkIn='2030-01-12';a.booking.checkOut='2030-01-14';assert.equal(run(w,a).ok,true);const b=cmd();b.booking.roomId='r2';assert.equal(run(w,b).ok,true);});
 test('pending does not hold a room, cannot confirm into conflict, and cancellation releases it',()=>{const w=workbook(),a=cmd(),b=cmd();b.booking.status='PENDING';run(w,a);run(w,b);assert.equal(run(w,cmd('status',{booking:undefined,bookingId:b.requestId,version:1,status:'CONFIRMED'})).code,'CONFLICT');assert.equal(run(w,cmd('status',{booking:undefined,bookingId:a.requestId,version:1,status:'CANCELLED'})).ok,true);assert.equal(run(w,cmd('status',{booking:undefined,bookingId:b.requestId,version:1,status:'CONFIRMED'})).ok,true);});
@@ -41,7 +41,7 @@ test('sample rooms cannot receive live bookings and invalid room flags fail clos
  w.rooms.rows[0][4]='yes';assert.equal(run(w,cmd('read')).code,'CORRUPT_WORKBOOK');
 });
 test('manual ledger corruption or existing overlaps prevent further booking changes',()=>{
- for(const mutate of [rows=>rows[0][5]='2030-02-30',rows=>rows[0][11]=-5,rows=>rows[0][8]='invalid',rows=>{const duplicate=[...rows[0]];duplicate[0]=randomUUID();rows.push(duplicate);}]){
+ for(const mutate of [rows=>rows[0][5]='2030-02-30',rows=>rows[0][10]=-5,rows=>rows[0][8]='invalid',rows=>{const duplicate=[...rows[0]];duplicate[0]=randomUUID();rows.push(duplicate);}]){
   const w=workbook();run(w,cmd());mutate(w.bookings.rows);const before=structuredClone(w.bookings.rows);
   assert.equal(run(w,cmd('read')).code,'CORRUPT_WORKBOOK');const change=cmd();change.booking.roomId='r2';assert.equal(run(w,change).code,'CORRUPT_WORKBOOK');assert.deepEqual(w.bookings.rows,before);
  }
@@ -64,5 +64,18 @@ test('amending dates retains the stored rate and moving units uses the destinati
 });
 test('tampering with the stored nightly rate makes the ledger fail closed',()=>{
  const w=workbook();w.rooms.rows[0][6]=80000;const c=cmd();c.booking.totalDue='160000';run(w,c);
- w.bookings.rows[0][19]=50000;assert.equal(run(w,cmd('read')).code,'CORRUPT_WORKBOOK');
+ w.bookings.rows[0][16]=50000;assert.equal(run(w,cmd('read')).code,'CORRUPT_WORKBOOK');
+});
+test('booking rows and public records contain no reference or payload fingerprints',()=>{
+ const w=workbook(),c=cmd();c.booking.reference='Discard this removed field';const saved=run(w,c);
+ assert.equal(w.bookings.rows[0].length,17);
+ for(const key of ['reference','initialFingerprint','lastFingerprint']){assert.equal(headers.includes(key),false);assert.equal(key in saved.booking,false);}
+});
+test('creation retry after subsequent edits fails closed and can be reconciled by request lookup',()=>{
+ const w=workbook(),c=cmd();run(w,c);const change=cmd('edit',{bookingId:c.requestId,version:1});change.booking.guestName='Amended';run(w,change);
+ assert.equal(run(w,c).code,'REQUEST_REUSED');const lookup=run(w,cmd('request',{requestId:c.requestId}));assert.equal(lookup.found,true);assert.equal(lookup.booking.guestName,'Amended');assert.equal(w.bookings.rows.length,1);
+});
+test('replaying a mutation with changed details, actor or original version is rejected without fingerprints',()=>{
+ const w=workbook(),c=cmd();run(w,c);const change=cmd('status',{booking:undefined,bookingId:c.requestId,version:1,status:'CANCELLED'});assert.equal(run(w,change).ok,true);assert.equal(run(w,change).replayed,true);
+ for(const extra of [{status:'CHECKED_IN'},{actor:'other@example.invalid'},{version:2}])assert.equal(run(w,{...change,...extra}).code,'REQUEST_REUSED');assert.equal(w.bookings.rows[0][1],2);
 });

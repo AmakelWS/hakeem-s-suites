@@ -10,12 +10,12 @@ interface TableStore {
   addRow(index: number, row: Row): void;
 }
 interface BookingStore { getTable(name: string): TableStore | undefined; }
-interface InputBooking { roomId?: string; guestName?: string; contact?: string; checkIn?: string; checkOut?: string; status?: string; source?: string; reference?: string; totalDue?: string | number | null; amountPaid?: string | number; notes?: string; nightlyRate?: number | null; }
+interface InputBooking { roomId?: string; guestName?: string; contact?: string; checkIn?: string; checkOut?: string; status?: string; source?: string; totalDue?: string | number | null; amountPaid?: string | number; notes?: string; nightlyRate?: number | null; }
 interface Command { contract: string; op: string; actor: string; actorId: string; role: string; requestId?: string; bookingId?: string; version?: number; status?: string; booking?: InputBooking; }
 interface Room { id: string; name: string; type: string; capacity: number | null; active: boolean; sample: boolean; nightlyRate: number | null; }
-interface Booking { id: string; version: number; roomId: string; guestName: string; contact: string; checkIn: string; checkOut: string; status: string; source: string; reference: string; totalDue: number | null; amountPaid: number; notes: string; createdBy: string; updatedBy: string; updatedAt: string; initialFingerprint: string; lastRequestId: string; lastFingerprint: string; nightlyRate: number | null; }
+interface Booking { id: string; version: number; roomId: string; guestName: string; contact: string; checkIn: string; checkOut: string; status: string; source: string; totalDue: number | null; amountPaid: number; notes: string; createdBy: string; updatedBy: string; updatedAt: string; lastRequestId: string; nightlyRate: number | null; }
 const ROOM_HEADERS = ['id','name','type','capacity','active','sample','nightlyRate'];
-const BOOKING_HEADERS = ['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','reference','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','initialFingerprint','lastRequestId','lastFingerprint','nightlyRate'];
+const BOOKING_HEADERS = ['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','lastRequestId','nightlyRate'];
 const CONTRACT='hakeems.sheets.v1';
 class Rejection extends Error { declare code: string; constructor(code:string,message:string){super(message);this.code=code;} }
 function reject(code:string,message:string):never{throw new Rejection(code,message);}
@@ -62,15 +62,15 @@ function readBookings(table:TableStore):Booking[]{
   return values(table).map(row=>{
     const id=String(row[0]),version=Number(row[1]);if(!id||ids.includes(id)||!Number.isInteger(version)||version<1)reject('CORRUPT_WORKBOOK','Invalid or duplicate booking ID/version.');ids.push(id);
     let total:number|null,paid:number,checkIn:string,checkOut:string,nightly:number|null;
-    try{total=money(row[10],true);paid=money(row[11],false) as number;checkIn=date(row[5]);checkOut=date(row[6]);nightly=money(row[19],true);}catch{return reject('CORRUPT_WORKBOOK','An existing reservation has invalid dates or amounts.');}
-    const b:Booking={id,version,roomId:String(row[2]),guestName:String(row[3]),contact:String(row[4]),checkIn,checkOut,status:String(row[7]),source:String(row[8]),reference:String(row[9]),totalDue:total===null?null:total/100,amountPaid:paid/100,notes:String(row[12]),createdBy:String(row[13]),updatedBy:String(row[14]),updatedAt:String(row[15]),initialFingerprint:String(row[16]),lastRequestId:String(row[17]),lastFingerprint:String(row[18]),nightlyRate:nightly===null?null:nightly/100};
+    try{total=money(row[9],true);paid=money(row[10],false) as number;checkIn=date(row[5]);checkOut=date(row[6]);nightly=money(row[16],true);}catch{return reject('CORRUPT_WORKBOOK','An existing reservation has invalid dates or amounts.');}
+    const b:Booking={id,version,roomId:String(row[2]),guestName:String(row[3]),contact:String(row[4]),checkIn,checkOut,status:String(row[7]),source:String(row[8]),totalDue:total===null?null:total/100,amountPaid:paid/100,notes:String(row[11]),createdBy:String(row[12]),updatedBy:String(row[13]),updatedAt:String(row[14]),lastRequestId:String(row[15]),nightlyRate:nightly===null?null:nightly/100};
     if(nightly!==null&&(nightly<=0||total!==nightly*stayNights(b.checkIn,b.checkOut)))reject('CORRUPT_WORKBOOK','Existing stay total does not match its stored nightly rate.');
     if(!b.guestName.trim()||!b.contact.trim()||!['WALK_IN','DIRECT_CALL','AIRBNB','BOOKING_COM','SOCIAL_MEDIA','OTHER'].includes(b.source)||b.checkOut<=b.checkIn||!['PENDING','CONFIRMED','CHECKED_IN','CHECKED_OUT','CANCELLED'].includes(b.status)||total!==null&&paid>total)reject('CORRUPT_WORKBOOK','Invalid existing stay or financial record.');return b;
   });
 }
-function toRow(b:Booking):Row{return [b.id,b.version,b.roomId,b.guestName,b.contact,b.checkIn,b.checkOut,b.status,b.source,b.reference,b.totalDue===null?'':b.totalDue,b.amountPaid,b.notes,b.createdBy,b.updatedBy,b.updatedAt,b.initialFingerprint,b.lastRequestId,b.lastFingerprint,b.nightlyRate===null?'':b.nightlyRate];}
+function toRow(b:Booking):Row{return [b.id,b.version,b.roomId,b.guestName,b.contact,b.checkIn,b.checkOut,b.status,b.source,b.totalDue===null?'':b.totalDue,b.amountPaid,b.notes,b.createdBy,b.updatedBy,b.updatedAt,b.lastRequestId,b.nightlyRate===null?'':b.nightlyRate];}
 function publicBooking(b:Booking):object{
-  const {initialFingerprint,lastFingerprint,...visible}=b;return {...visible,balance:b.totalDue===null?null:Math.round((b.totalDue-b.amountPaid)*100)/100,payment:b.totalDue!==null&&b.amountPaid===b.totalDue?'PAID':b.amountPaid>0?'PARTIAL':'UNPAID'};
+  return {...b,balance:b.totalDue===null?null:Math.round((b.totalDue-b.amountPaid)*100)/100,payment:b.totalDue!==null&&b.amountPaid===b.totalDue?'PAID':b.amountPaid>0?'PARTIAL':'UNPAID'};
 }
 function stayNights(checkIn:string,checkOut:string):number{return (Date.parse(checkOut+'T00:00:00Z')-Date.parse(checkIn+'T00:00:00Z'))/86400000;}
 function normalize(input:InputBooking,rooms:Room[],current?:Booking):InputBooking{
@@ -83,7 +83,17 @@ function normalize(input:InputBooking,rooms:Room[],current?:Booking):InputBookin
   if(due!==null&&due>999999999999)reject('INVALID','Stay amount exceeds the supported limit.');
   if(nightlyRate!==null&&submitted!==null&&submitted!==due)reject('PRICING_CHANGED','The total does not match the unit rate and nights. Refresh and review the price.');
   if(due!==null&&paid>due)return reject('INVALID','Paid amount cannot exceed the total due.');
-  return {roomId,guestName:text(input.guestName,'Guest name',120,true),contact:text(input.contact,'Contact',200,true),checkIn,checkOut,status:text(input.status,'Status',20,true),source,reference:text(input.reference,'Reference',100,false),totalDue:due===null?null:due/100,amountPaid:paid/100,notes:text(input.notes,'Notes',1000,false),nightlyRate};
+  return {roomId,guestName:text(input.guestName,'Guest name',120,true),contact:text(input.contact,'Contact',200,true),checkIn,checkOut,status:text(input.status,'Status',20,true),source,totalDue:due===null?null:due/100,amountPaid:paid/100,notes:text(input.notes,'Notes',1000,false),nightlyRate};
+}
+// Compare retries with the saved result; no payload fingerprints are stored.
+// Once later edits replace that result, callers use request lookup to reconcile.
+function sameSavedInput(input:InputBooking,current:Booking,amendment:boolean):boolean{
+  try{
+    const room:Room={id:current.roomId,name:current.roomId,type:'',capacity:null,active:true,sample:false,nightlyRate:current.nightlyRate};
+    const normalized=normalize(amendment?{...input,status:current.status}:input,[room],current);
+    const keys:(keyof InputBooking)[]=['roomId','guestName','contact','checkIn','checkOut','status','source','totalDue','amountPaid','notes','nightlyRate'];
+    return keys.every(key=>normalized[key]===current[key as keyof Booking]);
+  }catch{return false;}
 }
 function blocking(status:string):boolean{return ['CONFIRMED','CHECKED_IN','CHECKED_OUT'].includes(status);}
 function free(all:Booking[],next:Booking):void{
@@ -107,16 +117,15 @@ function runCommand_(workbook:BookingStore,payloadJson:string):string{
     const requestId=text(cmd.requestId,'Request reference',36,true);if(!/^[a-z0-9-]{36}$/i.test(requestId))reject('INVALID','Use the original request reference.');
     if(!['create','edit','status'].includes(cmd.op))reject('INVALID','Unsupported booking operation.');
     // RAW writes preserve strings without interpreting them as formulas.
-    const fingerprint=JSON.stringify([cmd.op,cmd.bookingId||'',cmd.version??'',cmd.status||'',cmd.booking||null,actor]);
     if(cmd.op==='create'){
       const old=all.find(b=>b.id===requestId);
-      if(old){if(old.initialFingerprint!==fingerprint)reject('REQUEST_REUSED','This reference already belongs to another request. Reconcile the existing booking.');return answer({booking:publicBooking(old),replayed:true});}
+      if(old){if(old.version!==1||old.createdBy!==actor||!sameSavedInput(cmd.booking as InputBooking,old,false))reject('REQUEST_REUSED','This booking already exists or has changed. Check its saved record before retrying.');return answer({booking:publicBooking(old),replayed:true});}
       const input=normalize(cmd.booking as InputBooking,rooms);if(!['PENDING','CONFIRMED','CANCELLED'].includes(input.status as string))reject('INVALID','New bookings must be pending, confirmed or cancelled.');
-      const next:Booking={id:requestId,version:1,roomId:input.roomId as string,guestName:input.guestName as string,contact:input.contact as string,checkIn:input.checkIn as string,checkOut:input.checkOut as string,status:input.status as string,source:input.source as string,reference:input.reference as string,totalDue:input.totalDue as number|null,amountPaid:input.amountPaid as number,notes:input.notes as string,createdBy:actor,updatedBy:actor,updatedAt:new Date().toISOString(),initialFingerprint:fingerprint,lastRequestId:requestId,lastFingerprint:fingerprint,nightlyRate:input.nightlyRate as number|null};
+      const next:Booking={id:requestId,version:1,roomId:input.roomId as string,guestName:input.guestName as string,contact:input.contact as string,checkIn:input.checkIn as string,checkOut:input.checkOut as string,status:input.status as string,source:input.source as string,totalDue:input.totalDue as number|null,amountPaid:input.amountPaid as number,notes:input.notes as string,createdBy:actor,updatedBy:actor,updatedAt:new Date().toISOString(),lastRequestId:requestId,nightlyRate:input.nightlyRate as number|null};
       free(all,next);writeAttempted=true;if(table.getRowCount()>all.length)table.getRangeBetweenHeaderAndTotal().getRow(all.length).setValues([toRow(next)]);else table.addRow(-1,toRow(next));return answer({booking:publicBooking(next),replayed:false});
     }
     const index=all.findIndex(b=>b.id===cmd.bookingId);if(index<0)reject('NOT_FOUND','Booking not found.');const current=all[index];
-    if(current.lastRequestId===requestId){if(current.lastFingerprint!==fingerprint)reject('REQUEST_REUSED','This request reference has already been used.');return answer({booking:publicBooking(current),replayed:true});}
+    if(current.lastRequestId===requestId){const same=cmd.version===current.version-1&&current.updatedBy===actor&&(cmd.op==='status'?cmd.status===current.status:sameSavedInput(cmd.booking as InputBooking,current,true));if(!same)reject('REQUEST_REUSED','This request belongs to another saved change. Check the existing booking.');return answer({booking:publicBooking(current),replayed:true});}
     if(!Number.isInteger(cmd.version)||cmd.version!==current.version)reject('STALE','Someone else changed this booking. Refresh and review the latest record.');
     let next:Booking={...current};
     if(cmd.op==='status'){
@@ -126,10 +135,10 @@ function runCommand_(workbook:BookingStore,payloadJson:string):string{
     }else{
       if(['CHECKED_OUT','CANCELLED'].includes(current.status))reject('INVALID','Completed or cancelled stays cannot be amended here.');
       const input=normalize({...cmd.booking,status:current.status},rooms,current);
-      next={...next,roomId:input.roomId as string,guestName:input.guestName as string,contact:input.contact as string,checkIn:input.checkIn as string,checkOut:input.checkOut as string,source:input.source as string,reference:input.reference as string,totalDue:input.totalDue as number|null,amountPaid:input.amountPaid as number,notes:input.notes as string,nightlyRate:input.nightlyRate as number|null};
+      next={...next,roomId:input.roomId as string,guestName:input.guestName as string,contact:input.contact as string,checkIn:input.checkIn as string,checkOut:input.checkOut as string,source:input.source as string,totalDue:input.totalDue as number|null,amountPaid:input.amountPaid as number,notes:input.notes as string,nightlyRate:input.nightlyRate as number|null};
     }
-    free(all,next);next.version++;next.updatedBy=actor;next.updatedAt=new Date().toISOString();next.lastRequestId=requestId;next.lastFingerprint=fingerprint;
-    // One row replacement includes data, version and replay metadata. No separate append log can partially succeed.
+    free(all,next);next.version++;next.updatedBy=actor;next.updatedAt=new Date().toISOString();next.lastRequestId=requestId;
+    // One row replacement includes data, version and the last request ID.
     writeAttempted=true;table.getRangeBetweenHeaderAndTotal().getRow(index).setValues([toRow(next)]);
     return answer({booking:publicBooking(next),replayed:false});
   }catch(error){if(error instanceof Rejection)return JSON.stringify({contract:CONTRACT,ok:false,code:error.code,message:error.message});

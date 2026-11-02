@@ -74,6 +74,7 @@ function doPost(event){
     // A killed execution or ambiguous write must stop later booking decisions.
     // Management reconciles the marked request before manually clearing this flag.
     if(settings.properties.getProperty('UNRESOLVED_WRITE'))return reply_(failure_('OUTCOME_UNKNOWN','A previous save needs management reconciliation. Keep your request reference; new saves are paused.'),settings.spreadsheetId);
+    if(command.op==='create'&&typeof command.requestId==='string'&&settings.properties.getProperty('RETIRED_BOOKING_'+command.requestId))return reply_(failure_('REQUEST_RETIRED','This booking was removed. Reload the page and start a new reservation.'),settings.spreadsheetId);
     const workbook=googleWorkbook_(settings,command);
     const result=JSON.parse(runCommand_(workbook,signed.payload));
     return reply_(result,settings.spreadsheetId);
@@ -82,32 +83,32 @@ function doPost(event){
   }finally{if(held)lock.releaseLock();}
 }
 function readRows_(spreadsheetId,name,width){
-  const last=width===7?'G':'T';
+  const last=width===7?'G':width===17?'Q':width===20?'T':null;if(!last)throw new Error('Unsupported table width.');
   const result=Sheets.Spreadsheets.Values.get(spreadsheetId,"'"+name+"'!A:"+last,{valueRenderOption:'UNFORMATTED_VALUE',dateTimeRenderOption:'SERIAL_NUMBER'});
   const rows=result.values||[];
   if(rows.length>10001)throw new Error('Booking sheet exceeds supported size.');
   return rows.map(row=>Array.from({length:width},(_,i)=>row[i]===undefined?'':row[i]));
 }
 function googleWorkbook_(settings,command){
-  const rooms=readRows_(settings.spreadsheetId,'Rooms',7),bookings=readRows_(settings.spreadsheetId,'Bookings',20);
+  const rooms=readRows_(settings.spreadsheetId,'Rooms',7),bookings=readRows_(settings.spreadsheetId,'Bookings',17);
   const table=(name,width,rows)=>({
     getHeaderRowRange:()=>({getValues:()=>[rows[0]||[]]}),
     getRowCount:()=>Math.max(0,rows.length-1),
     getRangeBetweenHeaderAndTotal:()=>({getValues:()=>rows.slice(1),getRow:index=>({setValues:values=>writeRow_(settings,command,name,width,index+2,values[0])})}),
     addRow:(_index,row)=>writeRow_(settings,command,name,width,rows.length+1,row)
   });
-  const roomTable=table('Rooms',7,rooms),bookingTable=table('Bookings',20,bookings);
+  const roomTable=table('Rooms',7,rooms),bookingTable=table('Bookings',17,bookings);
   return {getTable:name=>name==='OnlineRooms'?roomTable:name==='OnlineBookings'?bookingTable:null};
 }
 function writeRow_(settings,command,name,width,rowNumber,row){
-  if(name!=='Bookings'||width!==20||row.length!==20||rowNumber<2||rowNumber>10001)throw new Error('Invalid booking write.');
-  const range="'Bookings'!A"+rowNumber+':T'+rowNumber;
+  if(name!=='Bookings'||width!==17||row.length!==17||rowNumber<2||rowNumber>10001)throw new Error('Invalid booking write.');
+  const range="'Bookings'!A"+rowNumber+':Q'+rowNumber;
   settings.properties.setProperty('UNRESOLVED_WRITE',JSON.stringify({requestId:command.requestId,bookingId:command.bookingId||command.requestId,range,startedAt:new Date().toISOString()}));
   // RAW preserves +phone numbers, leading apostrophes and =formula-like notes literally.
   Sheets.Spreadsheets.Values.update({values:[row]},settings.spreadsheetId,range,{valueInputOption:'RAW'});
   const readback=Sheets.Spreadsheets.Values.get(settings.spreadsheetId,range,{valueRenderOption:'UNFORMATTED_VALUE'}).values||[];
   const actual=readback[0]||[];
-  if(JSON.stringify(Array.from({length:20},(_,i)=>actual[i]===undefined?'':actual[i]))!==JSON.stringify(row))throw new Error('Booking write could not be verified.');
+  if(JSON.stringify(Array.from({length:17},(_,i)=>actual[i]===undefined?'':actual[i]))!==JSON.stringify(row))throw new Error('Booking write could not be verified.');
   settings.properties.deleteProperty('UNRESOLVED_WRITE');
 }
 function initializeBookings(){
@@ -122,11 +123,83 @@ function initializeBookings(){
     const cells=records=>records.map(record=>({values:record.map(value=>({userEnteredValue:typeof value==='number'?{numberValue:value}:typeof value==='boolean'?{boolValue:value}:{stringValue:value}}))}));
     Sheets.Spreadsheets.batchUpdate({requests:[
       {addSheet:{properties:{sheetId:roomId,title:'Rooms',gridProperties:{rowCount:100,columnCount:7,frozenRowCount:1}}}},
-      {addSheet:{properties:{sheetId:bookingId,title:'Bookings',gridProperties:{rowCount:10001,columnCount:20,frozenRowCount:1}}}},
+      {addSheet:{properties:{sheetId:bookingId,title:'Bookings',gridProperties:{rowCount:10001,columnCount:17,frozenRowCount:1}}}},
       {updateCells:{start:{sheetId:roomId,rowIndex:0,columnIndex:0},rows:cells(rows),fields:'userEnteredValue'}},
       {updateCells:{start:{sheetId:bookingId,rowIndex:0,columnIndex:0},rows:cells([BOOKING_HEADERS]),fields:'userEnteredValue'}},
       {updateSpreadsheetProperties:{properties:{timeZone:'Africa/Douala'},fields:'timeZone'}}
     ]},settings.spreadsheetId);
     return 'Prepared 15 units and an empty booking ledger. Original sheets preserved; writes remain disabled.';
   }finally{lock.releaseLock();}
+}
+
+// Owner-editor utilities for the explicitly requested ledger cleanup.
+// These are NOT exposed by the public HTTP operation allowlist.
+function beginBookingCleanup(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    if(settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Reconcile the outstanding write before cleanup.');
+    if(settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES')===null)settings.properties.setProperty('BOOKING_CLEANUP_PREVIOUS_WRITES',settings.writes?'true':'false');
+    settings.properties.setProperty('WRITES_ENABLED','false');
+    console.log('Booking saves paused for the owner-requested cleanup. Sign-in remains available.');
+  }finally{lock.releaseLock();}
+}
+function clearBookingsAndSimplifyColumns(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    if(settings.writes||settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES')===null||settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Pause booking saves and reconcile outstanding requests before cleanup.');
+    const metadata=Sheets.Spreadsheets.get(settings.spreadsheetId,{fields:'sheets(properties(sheetId,title,gridProperties))'});
+    const sheet=metadata.sheets.find(item=>item.properties.title==='Bookings');
+    if(!sheet)throw new Error('Bookings sheet not found.');
+    const properties=sheet.properties,width=properties.gridProperties.columnCount;
+    if(![17,20].includes(width))throw new Error('Unexpected booking columns. Review the sheet before cleanup.');
+    const rows=readRows_(settings.spreadsheetId,'Bookings',width);
+    const legacy=['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','reference','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','initialFingerprint','lastRequestId','lastFingerprint','nightlyRate'];
+    if(JSON.stringify(rows[0])!==JSON.stringify(width===20?legacy:BOOKING_HEADERS))throw new Error('Unexpected booking headers. Nothing was cleared.');
+    const records=rows.slice(1).filter(row=>row.some(value=>value!==''));
+    if(records.some(row=>!/^[a-z0-9-]{36}$/i.test(String(row[0]))))throw new Error('Unexpected booking ID. Nothing was cleared.');
+    // Retire deleted IDs so delayed browser retries cannot recreate cleared stays.
+    for(const row of records)settings.properties.setProperty('RETIRED_BOOKING_'+row[0],'true');
+    settings.properties.setProperty('UNRESOLVED_WRITE',JSON.stringify({operation:'owner-booking-cleanup',startedAt:new Date().toISOString()}));
+    const requests=[{updateCells:{range:{sheetId:properties.sheetId,startRowIndex:0,endRowIndex:properties.gridProperties.rowCount,startColumnIndex:0,endColumnIndex:width},rows:[{values:BOOKING_HEADERS.map(value=>({userEnteredValue:{stringValue:value}}))}],fields:'userEnteredValue'}}];
+    if(width>17)requests.push({deleteDimension:{range:{sheetId:properties.sheetId,dimension:'COLUMNS',startIndex:17,endIndex:width}}});
+    Sheets.Spreadsheets.batchUpdate({requests},settings.spreadsheetId);
+    const verified=readRows_(settings.spreadsheetId,'Bookings',17);
+    if(JSON.stringify(verified[0])!==JSON.stringify(BOOKING_HEADERS)||verified.slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Cleanup needs reconciliation before re-enabling saves.');
+    settings.properties.deleteProperty('UNRESOLVED_WRITE');
+    console.log('Cleared '+records.length+' bookings. Bookings now has 17 columns, without reference or fingerprints. Rooms and other sheets preserved. Saves remain paused.');
+  }finally{lock.releaseLock();}
+}
+function finishBookingCleanup(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    const previous=settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES');
+    if(previous===null||settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Cleanup must be verified before resuming saves.');
+    const rows=readRows_(settings.spreadsheetId,'Bookings',17);
+    if(JSON.stringify(rows[0])!==JSON.stringify(BOOKING_HEADERS)||rows.slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Expected a verified empty booking ledger.');
+    verifyEmptyBookingLedger_(settings);
+    settings.properties.setProperty('WRITES_ENABLED',previous);
+    settings.properties.deleteProperty('BOOKING_CLEANUP_PREVIOUS_WRITES');
+    console.log('Owner-requested cleanup complete. Booking saves restored to '+previous+'.');
+  }finally{lock.releaseLock();}
+}
+function verifyEmptyBookingLedger_(settings){
+  const id='77777777-7777-4777-8777-777777777717';
+  const command={contract:'hakeems.sheets.v1',op:'create',actor:settings.owners[0],actorId:'owner-cleanup-verification',role:'OWNER',requestId:id};
+  const rooms=readRooms(googleWorkbook_(settings,command).getTable('OnlineRooms'));
+  const room=rooms.find(item=>item.active&&!item.sample&&item.nightlyRate!==null);
+  if(!room)throw new Error('No configured unit available for the cleanup verification.');
+  command.booking={roomId:room.id,guestName:'TEMPORARY CLEANUP CHECK',contact:'test@example.invalid',checkIn:'2099-01-10',checkOut:'2099-01-12',status:'CONFIRMED',source:'OTHER',totalDue:room.nightlyRate*2,amountPaid:0,notes:'Owner-requested technical check; removed immediately.'};
+  const run=cmd=>JSON.parse(runCommand_(googleWorkbook_(settings,cmd),JSON.stringify(cmd)));
+  const saved=run(command),replay=run(command);
+  if(!saved.ok||!replay.ok||!replay.replayed)throw new Error('Live save/retry verification failed. Saves remain paused.');
+  const conflict=run({...command,requestId:'77777777-7777-4777-8777-777777777718'});
+  if(conflict.code!=='CONFLICT')throw new Error('Live overlap verification failed. Saves remain paused.');
+  const cancelled=run({...command,op:'status',requestId:'77777777-7777-4777-8777-777777777719',bookingId:id,version:1,status:'CANCELLED'});
+  if(!cancelled.ok||cancelled.booking.status!=='CANCELLED')throw new Error('Live cancellation verification failed. Saves remain paused.');
+  const records=readRows_(settings.spreadsheetId,'Bookings',17).slice(1).filter(row=>row.some(value=>value!==''));
+  if(records.length!==1||records[0][0]!==id)throw new Error('Unexpected rows during verification. Saves remain paused.');
+  settings.properties.setProperty('RETIRED_BOOKING_'+id,'true');
+  writeRow_(settings,{requestId:id},'Bookings',17,2,Array(17).fill(''));
+  if(readRows_(settings.spreadsheetId,'Bookings',17).slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Verification cleanup did not finish. Saves remain paused.');
+  console.log('Verified live save, retry, overlap rejection and cancellation with the 17-column schema. Temporary check removed; ledger empty.');
 }

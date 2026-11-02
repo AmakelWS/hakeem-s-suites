@@ -16,7 +16,7 @@
 
 
 const ROOM_HEADERS = ['id','name','type','capacity','active','sample','nightlyRate'];
-const BOOKING_HEADERS = ['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','reference','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','initialFingerprint','lastRequestId','lastFingerprint','nightlyRate'];
+const BOOKING_HEADERS = ['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','lastRequestId','nightlyRate'];
 const CONTRACT='hakeems.sheets.v1';
 class Rejection extends Error {                       constructor(code       ,message       ){super(message);this.code=code;} }
 function reject(code       ,message       )      {throw new Rejection(code,message);}
@@ -63,15 +63,15 @@ function readBookings(table           )          {
   return values(table).map(row=>{
     const id=String(row[0]),version=Number(row[1]);if(!id||ids.includes(id)||!Number.isInteger(version)||version<1)reject('CORRUPT_WORKBOOK','Invalid or duplicate booking ID/version.');ids.push(id);
     let total            ,paid       ,checkIn       ,checkOut       ,nightly            ;
-    try{total=money(row[10],true);paid=money(row[11],false)          ;checkIn=date(row[5]);checkOut=date(row[6]);nightly=money(row[19],true);}catch{return reject('CORRUPT_WORKBOOK','An existing reservation has invalid dates or amounts.');}
-    const b        ={id,version,roomId:String(row[2]),guestName:String(row[3]),contact:String(row[4]),checkIn,checkOut,status:String(row[7]),source:String(row[8]),reference:String(row[9]),totalDue:total===null?null:total/100,amountPaid:paid/100,notes:String(row[12]),createdBy:String(row[13]),updatedBy:String(row[14]),updatedAt:String(row[15]),initialFingerprint:String(row[16]),lastRequestId:String(row[17]),lastFingerprint:String(row[18]),nightlyRate:nightly===null?null:nightly/100};
+    try{total=money(row[9],true);paid=money(row[10],false)          ;checkIn=date(row[5]);checkOut=date(row[6]);nightly=money(row[16],true);}catch{return reject('CORRUPT_WORKBOOK','An existing reservation has invalid dates or amounts.');}
+    const b        ={id,version,roomId:String(row[2]),guestName:String(row[3]),contact:String(row[4]),checkIn,checkOut,status:String(row[7]),source:String(row[8]),totalDue:total===null?null:total/100,amountPaid:paid/100,notes:String(row[11]),createdBy:String(row[12]),updatedBy:String(row[13]),updatedAt:String(row[14]),lastRequestId:String(row[15]),nightlyRate:nightly===null?null:nightly/100};
     if(nightly!==null&&(nightly<=0||total!==nightly*stayNights(b.checkIn,b.checkOut)))reject('CORRUPT_WORKBOOK','Existing stay total does not match its stored nightly rate.');
     if(!b.guestName.trim()||!b.contact.trim()||!['WALK_IN','DIRECT_CALL','AIRBNB','BOOKING_COM','SOCIAL_MEDIA','OTHER'].includes(b.source)||b.checkOut<=b.checkIn||!['PENDING','CONFIRMED','CHECKED_IN','CHECKED_OUT','CANCELLED'].includes(b.status)||total!==null&&paid>total)reject('CORRUPT_WORKBOOK','Invalid existing stay or financial record.');return b;
   });
 }
-function toRow(b        )    {return [b.id,b.version,b.roomId,b.guestName,b.contact,b.checkIn,b.checkOut,b.status,b.source,b.reference,b.totalDue===null?'':b.totalDue,b.amountPaid,b.notes,b.createdBy,b.updatedBy,b.updatedAt,b.initialFingerprint,b.lastRequestId,b.lastFingerprint,b.nightlyRate===null?'':b.nightlyRate];}
+function toRow(b        )    {return [b.id,b.version,b.roomId,b.guestName,b.contact,b.checkIn,b.checkOut,b.status,b.source,b.totalDue===null?'':b.totalDue,b.amountPaid,b.notes,b.createdBy,b.updatedBy,b.updatedAt,b.lastRequestId,b.nightlyRate===null?'':b.nightlyRate];}
 function publicBooking(b        )       {
-  const {initialFingerprint,lastFingerprint,...visible}=b;return {...visible,balance:b.totalDue===null?null:Math.round((b.totalDue-b.amountPaid)*100)/100,payment:b.totalDue!==null&&b.amountPaid===b.totalDue?'PAID':b.amountPaid>0?'PARTIAL':'UNPAID'};
+  return {...b,balance:b.totalDue===null?null:Math.round((b.totalDue-b.amountPaid)*100)/100,payment:b.totalDue!==null&&b.amountPaid===b.totalDue?'PAID':b.amountPaid>0?'PARTIAL':'UNPAID'};
 }
 function stayNights(checkIn       ,checkOut       )       {return (Date.parse(checkOut+'T00:00:00Z')-Date.parse(checkIn+'T00:00:00Z'))/86400000;}
 function normalize(input             ,rooms       ,current         )             {
@@ -84,7 +84,17 @@ function normalize(input             ,rooms       ,current         )            
   if(due!==null&&due>999999999999)reject('INVALID','Stay amount exceeds the supported limit.');
   if(nightlyRate!==null&&submitted!==null&&submitted!==due)reject('PRICING_CHANGED','The total does not match the unit rate and nights. Refresh and review the price.');
   if(due!==null&&paid>due)return reject('INVALID','Paid amount cannot exceed the total due.');
-  return {roomId,guestName:text(input.guestName,'Guest name',120,true),contact:text(input.contact,'Contact',200,true),checkIn,checkOut,status:text(input.status,'Status',20,true),source,reference:text(input.reference,'Reference',100,false),totalDue:due===null?null:due/100,amountPaid:paid/100,notes:text(input.notes,'Notes',1000,false),nightlyRate};
+  return {roomId,guestName:text(input.guestName,'Guest name',120,true),contact:text(input.contact,'Contact',200,true),checkIn,checkOut,status:text(input.status,'Status',20,true),source,totalDue:due===null?null:due/100,amountPaid:paid/100,notes:text(input.notes,'Notes',1000,false),nightlyRate};
+}
+// Compare retries with the saved result; no payload fingerprints are stored.
+// Once later edits replace that result, callers use request lookup to reconcile.
+function sameSavedInput(input             ,current        ,amendment        )        {
+  try{
+    const room     ={id:current.roomId,name:current.roomId,type:'',capacity:null,active:true,sample:false,nightlyRate:current.nightlyRate};
+    const normalized=normalize(amendment?{...input,status:current.status}:input,[room],current);
+    const keys                       =['roomId','guestName','contact','checkIn','checkOut','status','source','totalDue','amountPaid','notes','nightlyRate'];
+    return keys.every(key=>normalized[key]===current[key                 ]);
+  }catch{return false;}
 }
 function blocking(status       )        {return ['CONFIRMED','CHECKED_IN','CHECKED_OUT'].includes(status);}
 function free(all          ,next        )     {
@@ -108,16 +118,15 @@ function runCommand_(workbook             ,payloadJson       )       {
     const requestId=text(cmd.requestId,'Request reference',36,true);if(!/^[a-z0-9-]{36}$/i.test(requestId))reject('INVALID','Use the original request reference.');
     if(!['create','edit','status'].includes(cmd.op))reject('INVALID','Unsupported booking operation.');
     // RAW writes preserve strings without interpreting them as formulas.
-    const fingerprint=JSON.stringify([cmd.op,cmd.bookingId||'',cmd.version??'',cmd.status||'',cmd.booking||null,actor]);
     if(cmd.op==='create'){
       const old=all.find(b=>b.id===requestId);
-      if(old){if(old.initialFingerprint!==fingerprint)reject('REQUEST_REUSED','This reference already belongs to another request. Reconcile the existing booking.');return answer({booking:publicBooking(old),replayed:true});}
+      if(old){if(old.version!==1||old.createdBy!==actor||!sameSavedInput(cmd.booking                ,old,false))reject('REQUEST_REUSED','This booking already exists or has changed. Check its saved record before retrying.');return answer({booking:publicBooking(old),replayed:true});}
       const input=normalize(cmd.booking                ,rooms);if(!['PENDING','CONFIRMED','CANCELLED'].includes(input.status          ))reject('INVALID','New bookings must be pending, confirmed or cancelled.');
-      const next        ={id:requestId,version:1,roomId:input.roomId          ,guestName:input.guestName          ,contact:input.contact          ,checkIn:input.checkIn          ,checkOut:input.checkOut          ,status:input.status          ,source:input.source          ,reference:input.reference          ,totalDue:input.totalDue               ,amountPaid:input.amountPaid          ,notes:input.notes          ,createdBy:actor,updatedBy:actor,updatedAt:new Date().toISOString(),initialFingerprint:fingerprint,lastRequestId:requestId,lastFingerprint:fingerprint,nightlyRate:input.nightlyRate               };
+      const next        ={id:requestId,version:1,roomId:input.roomId          ,guestName:input.guestName          ,contact:input.contact          ,checkIn:input.checkIn          ,checkOut:input.checkOut          ,status:input.status          ,source:input.source          ,totalDue:input.totalDue               ,amountPaid:input.amountPaid          ,notes:input.notes          ,createdBy:actor,updatedBy:actor,updatedAt:new Date().toISOString(),lastRequestId:requestId,nightlyRate:input.nightlyRate               };
       free(all,next);writeAttempted=true;if(table.getRowCount()>all.length)table.getRangeBetweenHeaderAndTotal().getRow(all.length).setValues([toRow(next)]);else table.addRow(-1,toRow(next));return answer({booking:publicBooking(next),replayed:false});
     }
     const index=all.findIndex(b=>b.id===cmd.bookingId);if(index<0)reject('NOT_FOUND','Booking not found.');const current=all[index];
-    if(current.lastRequestId===requestId){if(current.lastFingerprint!==fingerprint)reject('REQUEST_REUSED','This request reference has already been used.');return answer({booking:publicBooking(current),replayed:true});}
+    if(current.lastRequestId===requestId){const same=cmd.version===current.version-1&&current.updatedBy===actor&&(cmd.op==='status'?cmd.status===current.status:sameSavedInput(cmd.booking                ,current,true));if(!same)reject('REQUEST_REUSED','This request belongs to another saved change. Check the existing booking.');return answer({booking:publicBooking(current),replayed:true});}
     if(!Number.isInteger(cmd.version)||cmd.version!==current.version)reject('STALE','Someone else changed this booking. Refresh and review the latest record.');
     let next        ={...current};
     if(cmd.op==='status'){
@@ -127,10 +136,10 @@ function runCommand_(workbook             ,payloadJson       )       {
     }else{
       if(['CHECKED_OUT','CANCELLED'].includes(current.status))reject('INVALID','Completed or cancelled stays cannot be amended here.');
       const input=normalize({...cmd.booking,status:current.status},rooms,current);
-      next={...next,roomId:input.roomId          ,guestName:input.guestName          ,contact:input.contact          ,checkIn:input.checkIn          ,checkOut:input.checkOut          ,source:input.source          ,reference:input.reference          ,totalDue:input.totalDue               ,amountPaid:input.amountPaid          ,notes:input.notes          ,nightlyRate:input.nightlyRate               };
+      next={...next,roomId:input.roomId          ,guestName:input.guestName          ,contact:input.contact          ,checkIn:input.checkIn          ,checkOut:input.checkOut          ,source:input.source          ,totalDue:input.totalDue               ,amountPaid:input.amountPaid          ,notes:input.notes          ,nightlyRate:input.nightlyRate               };
     }
-    free(all,next);next.version++;next.updatedBy=actor;next.updatedAt=new Date().toISOString();next.lastRequestId=requestId;next.lastFingerprint=fingerprint;
-    // One row replacement includes data, version and replay metadata. No separate append log can partially succeed.
+    free(all,next);next.version++;next.updatedBy=actor;next.updatedAt=new Date().toISOString();next.lastRequestId=requestId;
+    // One row replacement includes data, version and the last request ID.
     writeAttempted=true;table.getRangeBetweenHeaderAndTotal().getRow(index).setValues([toRow(next)]);
     return answer({booking:publicBooking(next),replayed:false});
   }catch(error){if(error instanceof Rejection)return JSON.stringify({contract:CONTRACT,ok:false,code:error.code,message:error.message});
@@ -213,6 +222,7 @@ function doPost(event){
     // A killed execution or ambiguous write must stop later booking decisions.
     // Management reconciles the marked request before manually clearing this flag.
     if(settings.properties.getProperty('UNRESOLVED_WRITE'))return reply_(failure_('OUTCOME_UNKNOWN','A previous save needs management reconciliation. Keep your request reference; new saves are paused.'),settings.spreadsheetId);
+    if(command.op==='create'&&typeof command.requestId==='string'&&settings.properties.getProperty('RETIRED_BOOKING_'+command.requestId))return reply_(failure_('REQUEST_RETIRED','This booking was removed. Reload the page and start a new reservation.'),settings.spreadsheetId);
     const workbook=googleWorkbook_(settings,command);
     const result=JSON.parse(runCommand_(workbook,signed.payload));
     return reply_(result,settings.spreadsheetId);
@@ -221,32 +231,32 @@ function doPost(event){
   }finally{if(held)lock.releaseLock();}
 }
 function readRows_(spreadsheetId,name,width){
-  const last=width===7?'G':'T';
+  const last=width===7?'G':width===17?'Q':width===20?'T':null;if(!last)throw new Error('Unsupported table width.');
   const result=Sheets.Spreadsheets.Values.get(spreadsheetId,"'"+name+"'!A:"+last,{valueRenderOption:'UNFORMATTED_VALUE',dateTimeRenderOption:'SERIAL_NUMBER'});
   const rows=result.values||[];
   if(rows.length>10001)throw new Error('Booking sheet exceeds supported size.');
   return rows.map(row=>Array.from({length:width},(_,i)=>row[i]===undefined?'':row[i]));
 }
 function googleWorkbook_(settings,command){
-  const rooms=readRows_(settings.spreadsheetId,'Rooms',7),bookings=readRows_(settings.spreadsheetId,'Bookings',20);
+  const rooms=readRows_(settings.spreadsheetId,'Rooms',7),bookings=readRows_(settings.spreadsheetId,'Bookings',17);
   const table=(name,width,rows)=>({
     getHeaderRowRange:()=>({getValues:()=>[rows[0]||[]]}),
     getRowCount:()=>Math.max(0,rows.length-1),
     getRangeBetweenHeaderAndTotal:()=>({getValues:()=>rows.slice(1),getRow:index=>({setValues:values=>writeRow_(settings,command,name,width,index+2,values[0])})}),
     addRow:(_index,row)=>writeRow_(settings,command,name,width,rows.length+1,row)
   });
-  const roomTable=table('Rooms',7,rooms),bookingTable=table('Bookings',20,bookings);
+  const roomTable=table('Rooms',7,rooms),bookingTable=table('Bookings',17,bookings);
   return {getTable:name=>name==='OnlineRooms'?roomTable:name==='OnlineBookings'?bookingTable:null};
 }
 function writeRow_(settings,command,name,width,rowNumber,row){
-  if(name!=='Bookings'||width!==20||row.length!==20||rowNumber<2||rowNumber>10001)throw new Error('Invalid booking write.');
-  const range="'Bookings'!A"+rowNumber+':T'+rowNumber;
+  if(name!=='Bookings'||width!==17||row.length!==17||rowNumber<2||rowNumber>10001)throw new Error('Invalid booking write.');
+  const range="'Bookings'!A"+rowNumber+':Q'+rowNumber;
   settings.properties.setProperty('UNRESOLVED_WRITE',JSON.stringify({requestId:command.requestId,bookingId:command.bookingId||command.requestId,range,startedAt:new Date().toISOString()}));
   // RAW preserves +phone numbers, leading apostrophes and =formula-like notes literally.
   Sheets.Spreadsheets.Values.update({values:[row]},settings.spreadsheetId,range,{valueInputOption:'RAW'});
   const readback=Sheets.Spreadsheets.Values.get(settings.spreadsheetId,range,{valueRenderOption:'UNFORMATTED_VALUE'}).values||[];
   const actual=readback[0]||[];
-  if(JSON.stringify(Array.from({length:20},(_,i)=>actual[i]===undefined?'':actual[i]))!==JSON.stringify(row))throw new Error('Booking write could not be verified.');
+  if(JSON.stringify(Array.from({length:17},(_,i)=>actual[i]===undefined?'':actual[i]))!==JSON.stringify(row))throw new Error('Booking write could not be verified.');
   settings.properties.deleteProperty('UNRESOLVED_WRITE');
 }
 function initializeBookings(){
@@ -261,11 +271,83 @@ function initializeBookings(){
     const cells=records=>records.map(record=>({values:record.map(value=>({userEnteredValue:typeof value==='number'?{numberValue:value}:typeof value==='boolean'?{boolValue:value}:{stringValue:value}}))}));
     Sheets.Spreadsheets.batchUpdate({requests:[
       {addSheet:{properties:{sheetId:roomId,title:'Rooms',gridProperties:{rowCount:100,columnCount:7,frozenRowCount:1}}}},
-      {addSheet:{properties:{sheetId:bookingId,title:'Bookings',gridProperties:{rowCount:10001,columnCount:20,frozenRowCount:1}}}},
+      {addSheet:{properties:{sheetId:bookingId,title:'Bookings',gridProperties:{rowCount:10001,columnCount:17,frozenRowCount:1}}}},
       {updateCells:{start:{sheetId:roomId,rowIndex:0,columnIndex:0},rows:cells(rows),fields:'userEnteredValue'}},
       {updateCells:{start:{sheetId:bookingId,rowIndex:0,columnIndex:0},rows:cells([BOOKING_HEADERS]),fields:'userEnteredValue'}},
       {updateSpreadsheetProperties:{properties:{timeZone:'Africa/Douala'},fields:'timeZone'}}
     ]},settings.spreadsheetId);
     return 'Prepared 15 units and an empty booking ledger. Original sheets preserved; writes remain disabled.';
   }finally{lock.releaseLock();}
+}
+
+// Owner-editor utilities for the explicitly requested ledger cleanup.
+// These are NOT exposed by the public HTTP operation allowlist.
+function beginBookingCleanup(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    if(settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Reconcile the outstanding write before cleanup.');
+    if(settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES')===null)settings.properties.setProperty('BOOKING_CLEANUP_PREVIOUS_WRITES',settings.writes?'true':'false');
+    settings.properties.setProperty('WRITES_ENABLED','false');
+    console.log('Booking saves paused for the owner-requested cleanup. Sign-in remains available.');
+  }finally{lock.releaseLock();}
+}
+function clearBookingsAndSimplifyColumns(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    if(settings.writes||settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES')===null||settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Pause booking saves and reconcile outstanding requests before cleanup.');
+    const metadata=Sheets.Spreadsheets.get(settings.spreadsheetId,{fields:'sheets(properties(sheetId,title,gridProperties))'});
+    const sheet=metadata.sheets.find(item=>item.properties.title==='Bookings');
+    if(!sheet)throw new Error('Bookings sheet not found.');
+    const properties=sheet.properties,width=properties.gridProperties.columnCount;
+    if(![17,20].includes(width))throw new Error('Unexpected booking columns. Review the sheet before cleanup.');
+    const rows=readRows_(settings.spreadsheetId,'Bookings',width);
+    const legacy=['id','version','roomId','guestName','contact','checkIn','checkOut','status','source','reference','totalDue','amountPaid','notes','createdBy','updatedBy','updatedAt','initialFingerprint','lastRequestId','lastFingerprint','nightlyRate'];
+    if(JSON.stringify(rows[0])!==JSON.stringify(width===20?legacy:BOOKING_HEADERS))throw new Error('Unexpected booking headers. Nothing was cleared.');
+    const records=rows.slice(1).filter(row=>row.some(value=>value!==''));
+    if(records.some(row=>!/^[a-z0-9-]{36}$/i.test(String(row[0]))))throw new Error('Unexpected booking ID. Nothing was cleared.');
+    // Retire deleted IDs so delayed browser retries cannot recreate cleared stays.
+    for(const row of records)settings.properties.setProperty('RETIRED_BOOKING_'+row[0],'true');
+    settings.properties.setProperty('UNRESOLVED_WRITE',JSON.stringify({operation:'owner-booking-cleanup',startedAt:new Date().toISOString()}));
+    const requests=[{updateCells:{range:{sheetId:properties.sheetId,startRowIndex:0,endRowIndex:properties.gridProperties.rowCount,startColumnIndex:0,endColumnIndex:width},rows:[{values:BOOKING_HEADERS.map(value=>({userEnteredValue:{stringValue:value}}))}],fields:'userEnteredValue'}}];
+    if(width>17)requests.push({deleteDimension:{range:{sheetId:properties.sheetId,dimension:'COLUMNS',startIndex:17,endIndex:width}}});
+    Sheets.Spreadsheets.batchUpdate({requests},settings.spreadsheetId);
+    const verified=readRows_(settings.spreadsheetId,'Bookings',17);
+    if(JSON.stringify(verified[0])!==JSON.stringify(BOOKING_HEADERS)||verified.slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Cleanup needs reconciliation before re-enabling saves.');
+    settings.properties.deleteProperty('UNRESOLVED_WRITE');
+    console.log('Cleared '+records.length+' bookings. Bookings now has 17 columns, without reference or fingerprints. Rooms and other sheets preserved. Saves remain paused.');
+  }finally{lock.releaseLock();}
+}
+function finishBookingCleanup(){
+  const settings=sheetSettings_(),lock=LockService.getScriptLock();lock.waitLock(20000);
+  try{
+    const previous=settings.properties.getProperty('BOOKING_CLEANUP_PREVIOUS_WRITES');
+    if(previous===null||settings.properties.getProperty('UNRESOLVED_WRITE'))throw new Error('Cleanup must be verified before resuming saves.');
+    const rows=readRows_(settings.spreadsheetId,'Bookings',17);
+    if(JSON.stringify(rows[0])!==JSON.stringify(BOOKING_HEADERS)||rows.slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Expected a verified empty booking ledger.');
+    verifyEmptyBookingLedger_(settings);
+    settings.properties.setProperty('WRITES_ENABLED',previous);
+    settings.properties.deleteProperty('BOOKING_CLEANUP_PREVIOUS_WRITES');
+    console.log('Owner-requested cleanup complete. Booking saves restored to '+previous+'.');
+  }finally{lock.releaseLock();}
+}
+function verifyEmptyBookingLedger_(settings){
+  const id='77777777-7777-4777-8777-777777777717';
+  const command={contract:'hakeems.sheets.v1',op:'create',actor:settings.owners[0],actorId:'owner-cleanup-verification',role:'OWNER',requestId:id};
+  const rooms=readRooms(googleWorkbook_(settings,command).getTable('OnlineRooms'));
+  const room=rooms.find(item=>item.active&&!item.sample&&item.nightlyRate!==null);
+  if(!room)throw new Error('No configured unit available for the cleanup verification.');
+  command.booking={roomId:room.id,guestName:'TEMPORARY CLEANUP CHECK',contact:'test@example.invalid',checkIn:'2099-01-10',checkOut:'2099-01-12',status:'CONFIRMED',source:'OTHER',totalDue:room.nightlyRate*2,amountPaid:0,notes:'Owner-requested technical check; removed immediately.'};
+  const run=cmd=>JSON.parse(runCommand_(googleWorkbook_(settings,cmd),JSON.stringify(cmd)));
+  const saved=run(command),replay=run(command);
+  if(!saved.ok||!replay.ok||!replay.replayed)throw new Error('Live save/retry verification failed. Saves remain paused.');
+  const conflict=run({...command,requestId:'77777777-7777-4777-8777-777777777718'});
+  if(conflict.code!=='CONFLICT')throw new Error('Live overlap verification failed. Saves remain paused.');
+  const cancelled=run({...command,op:'status',requestId:'77777777-7777-4777-8777-777777777719',bookingId:id,version:1,status:'CANCELLED'});
+  if(!cancelled.ok||cancelled.booking.status!=='CANCELLED')throw new Error('Live cancellation verification failed. Saves remain paused.');
+  const records=readRows_(settings.spreadsheetId,'Bookings',17).slice(1).filter(row=>row.some(value=>value!==''));
+  if(records.length!==1||records[0][0]!==id)throw new Error('Unexpected rows during verification. Saves remain paused.');
+  settings.properties.setProperty('RETIRED_BOOKING_'+id,'true');
+  writeRow_(settings,{requestId:id},'Bookings',17,2,Array(17).fill(''));
+  if(readRows_(settings.spreadsheetId,'Bookings',17).slice(1).some(row=>row.some(value=>value!=='')))throw new Error('Verification cleanup did not finish. Saves remain paused.');
+  console.log('Verified live save, retry, overlap rejection and cancellation with the 17-column schema. Temporary check removed; ledger empty.');
 }
