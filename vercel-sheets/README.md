@@ -2,7 +2,7 @@
 
 Staff booking website with a shared staff password and Google owner sign-in and Google Sheets as the live booking store. This is separate from the public Next.js marketing website in the repository root.
 
-**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in and authenticated reads from the selected Google Sheet are verified. The initializer created Rooms and Bookings while preserving Sheet1, and the website read all 15 units with their confirmed rates. Booking saves remain disabled pending execution of the approved fictional save/overlap tests and backing Sheet sharing restriction. This is not a business availability ledger; existing reservations have not been imported.
+**Non-commercial test deployment: [hakeems-bookings.vercel.app](https://hakeems-bookings.vercel.app).** Google owner sign-in, live reads and a fictional browser save are verified. Signed gateway checks verified overlapping requests, stable-reference retries and cancellation. Test saves are enabled; the backing Sheet is restricted to its owner. All three fictional test records are cancelled. The shared staff login is deployed but starts disabled until the owner sets a password on the website. Existing business reservations have not been imported or reconciled.
 
 ## Connect this folder to Vercel
 
@@ -53,7 +53,7 @@ npm run build:gateway
 npm test
 ```
 
-All 55 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
+All 57 local tests passed. These use simulated Google services and do not establish live connection health or actual Google concurrency behavior. See [VALIDATION.md](VALIDATION.md).
 
 Once the real development environment is configured, `node --env-file=.env.local dev-server.js` serves on port 8091. Register the local callback separately. Localhost-only `?preview=1` uses fictional in-memory records; deployed hosts cannot enable this mode.
 
